@@ -1,5 +1,0 @@
-- Separate statistical function from generic part
-
-- Add Normalization script. 
-
-- Implement "Naive selection"
