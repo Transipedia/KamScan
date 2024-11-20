@@ -1,14 +1,6 @@
-<<<<<<< HEAD
-# Kamscan
-# Perform parallel statistical tests over k-mer or contig count matrices
-## Description:
-This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test and zero inflated wilcoxon test.
-=======
 # KamScan
-## Scans a k-mer count matrix and select lines with given statistics:
-##  (Example with Z-inflated Wilcoxon statistics)
->>>>>>> 98a64158eb96277b91c45c3f7024e6dc1fe86be8
-
+# Perform parallel statistical tests over k-mer or contig count matrices
+This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test and zero inflated wilcoxon test.
 ## Usage:
 ```
 python3 perform_stat_test.py [options]
