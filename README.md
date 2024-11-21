@@ -28,11 +28,7 @@ python3 kamscan.py [options]
 
 - `-m, --cpm`  
   Perform Counts Per Million (CPM) normalization using a file containing the total number of k-mers for each patient.
-  The file should be a text file with two columns separated by a space, formatted as follows:
-  Patient Nb_kmers
-  normal_47 2674811466
-  normal_42 1647243992
-  normal_41 1895267549
+  The file should be a text file with two columns separated by a space, formatted as the `design_kmers_nb_per_patient` file in the GitHub repository.
   
 - `--test_type`  
   Specify the type of statistical test to be performed.  
