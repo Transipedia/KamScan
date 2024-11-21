@@ -3,7 +3,7 @@
 This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test and zero inflated wilcoxon test.
 ## Usage:
 ```
-python3 perform_stat_test.py [options]
+python3 kamscan.py [options]
 ```
 ## Arguments:
 - `-i, --input`  
@@ -36,7 +36,7 @@ python3 perform_stat_test.py [options]
 
 ## Example Usage:
 ```
-python3 perform_stat_test.py -i kmer_count_matrix -o results_folder -t 10000 -c 5000 -p 8 -d condition_folder -m normalization_file.txt --test_type ttest
+python3 kamscan.py -i kmer_count_matrix -o results_folder -t 10000 -c 5000 -p 8 -d condition_folder -m normalization_file.txt --test_type ttest
 ```
 ## Note:
 - Make sure to provide the correct condition folder to store the design files. The script accepts various design files as input, each containing a table with the patient_id in the first column and their corresponding condition in the second column. For example, condition can be normal or tumoral.
