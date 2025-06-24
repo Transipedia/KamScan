@@ -261,14 +261,14 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
             result = perform_ttest(tag, grp_a_data, grp_b_data)
             if result is not None:
                 tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
-                results.append((abs(result[1]), tag_values))
+                results.append((abs(result[1]), tag_values, result[2]))
 
     elif test_type == 'wilcoxon':
         for tag in data_chunk.index:
             result= perform_wilcoxon_test(tag,grp_a_data,grp_b_data)
             if result is not None:
                 tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
-                results.append((abs(result[1]), tag_values))
+                results.append((abs(result[1]), tag_values, result[2]))
 
     elif test_type == "ziw":
         for tag in data_chunk.index:
