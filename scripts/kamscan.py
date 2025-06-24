@@ -162,7 +162,7 @@ for condition_file, top_tags in zip(condition_files, top_tags_list):
 
         if args.test_type == 'ttest' or args.test_type == 'wilcoxon':
             for t_statistic, values, p_value in top_tags:
-                output_data.append([values, t_statistic, p_value ])
+                output_data.append([values, t_statistic, p_value])
                 file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the tstat in the output table
 
         elif args.test_type == 'ziw':
