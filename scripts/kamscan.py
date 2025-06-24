@@ -104,7 +104,7 @@ for condition_file in condition_files:
 
     elif args.test_type == 'ttest' or args.test_type == 'wilcoxon':
         for chunk_results in result:
-            top_tags.extend([(t_statistic, tag_values) for t_statistic, tag_values in chunk_results])
+            top_tags.extend([(t_statistic, tag_values, p_value) for t_statistic, tag_values, p_value in chunk_results])
             top_tags.sort(key = lambda x: x[0], reverse = True)  # Sort based on t-statistic
             top_tags = top_tags[:args.top_tags]
         top_tags_list.append(top_tags)
@@ -129,6 +129,7 @@ for condition_file in condition_files:
 
 if args.test_type == 'ttest' or args.test_type == 'wilcoxon' or args.test_type == 'ziw':
     header.append('test_statistic')
+    header.append('p_value')
 
 elif args.test_type =='pitest':
     header.append('pivalue')
@@ -160,7 +161,7 @@ for condition_file, top_tags in zip(condition_files, top_tags_list):
         file.write(' '.join(header) + '\n')
 
         if args.test_type == 'ttest' or args.test_type == 'wilcoxon':
-            for t_statistic, values in top_tags:
+            for t_statistic, values, p_value in top_tags:
                 output_data.append([values, t_statistic])
                 file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the tstat in the output table
 
