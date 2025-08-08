@@ -159,17 +159,25 @@ def perform_ziw(tag, grp_a, grp_b, data_dict):
 # Perform variance and coefficient of variation (CV)
 def calculate_variance_and_cv(tag, data_chunk):
     numeric_values = pd.to_numeric(data_chunk.loc[tag], errors='coerce')
-    numeric_values = numeric_values.dropna()  # Supprimer les valeurs non numériques
+    numeric_values = numeric_values.dropna()
 
     if not numeric_values.empty:
-        mean_value = np.mean(numeric_values.values.astype(float))
-        std_dev_value = np.std(numeric_values.values.astype(float))
+        mean_value = np.mean(numeric_values)
+        std_dev_value = np.std(numeric_values)
+        variance_value = np.var(numeric_values)
 
-        if mean_value != 0:  # Avoid division by zero
+        if mean_value != 0:
             cv_value = std_dev_value / mean_value
-            tag_values = ' '.join(data_chunk.loc[tag].astype(str))
-            return cv_value, tag_values
+
+            tag_values = ' '.join(
+                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                for x in data_chunk.loc[tag].values
+            )
+
+            return variance_value, cv_value, tag_values
+
     return None
+
 
 def calculate_pre_statistics_for_ziw(data_dict: dict) -> dict:
     # Calculate some statistics required to perform ZIW
@@ -249,42 +257,63 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
         grp_b_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'B']]
         normalized_chunk = data_chunk
     results = [] 
+    
     if test_type == 'pitest':
         for tag in data_chunk.index:
             result = perform_pitest(tag, grp_a_data, grp_b_data)
             if result is not None:
-                tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
-                results.append((tag_values,abs(result[1]),result[2]))
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((tag_values , abs(result[1]), result[2]))                
 
+    
     elif test_type == 'ttest':
         for tag in data_chunk.index:
             result = perform_ttest(tag, grp_a_data, grp_b_data)
             if result is not None:
-                tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
                 results.append((abs(result[1]), tag_values, result[2]))
 
     elif test_type == 'wilcoxon':
         for tag in data_chunk.index:
             result= perform_wilcoxon_test(tag,grp_a_data,grp_b_data)
             if result is not None:
-                tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
                 results.append((abs(result[1]), tag_values, result[2]))
 
     elif test_type == "ziw":
         for tag in data_chunk.index:
             result = perform_ziw(tag, grp_a_data, grp_b_data, label_dict)
-            tag_values = ' '.join(data_chunk.loc[tag].values.astype(str))
+            tag_values = ' '.join(
+                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                for x in data_chunk.loc[tag].values
+            )
             results.append((abs(result[1]), tag_values))
             # WIP
             #kmer_values = data_chunk.loc[tag][1:].astype(float).round(1)
             #tag_values = ' '.join(kmer_values.astype(str).tolist())
             #results.append((abs(result[1]), tag_values)
+
+
+
     elif test_type == "variance":  # "coefficient_variation"
         for tag in normalized_chunk.index:
             result = calculate_variance_and_cv(tag, normalized_chunk)
             if result is not None:
-                cv_value, tag_values = result
-                results.append((cv_value, tag_values))
+                variance_value, cv_value, tag_values = result
+                results.append((variance_value, cv_value, tag_values))
+            
+
+        
+
     
     logging.info(f"Chunk processed: {len(data_chunk)} rows")
     return results
