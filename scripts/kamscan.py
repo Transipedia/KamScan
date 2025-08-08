@@ -1,185 +1,319 @@
-from functions import *
+import functools
+import shutil
+import time
+import statistics
+import pandas as pd
+import numpy as np
+from scipy.stats import ttest_ind
+from scipy.stats import rankdata
+from scipy.stats import mannwhitneyu
+import multiprocessing as mp
+import argparse
+import glob
 import os
-
-start_time = time.time()
-
-# ......................................................
-#
-#   PARSE ARGUMENTS ----
-#
-# ......................................................
-parser = argparse.ArgumentParser(description='Perform univariate statistical test such as T test or Zero inflated Wilcoxon.')
-parser.add_argument('-i', '--input', type=str, help='Input count matrix path.')
-parser.add_argument('-o', '--output_folder', type=str, help='Output folder path.')
-parser.add_argument('-t', '--top_tags', type=float, default=200000, help='Top tags with best test statistics to keep.')
-parser.add_argument('-c', '--chunk_size', type=int, default=10000, help='Size of each chunk in number of rows.')
-parser.add_argument('-p', '--processes', type=int, default=mp.cpu_count(), help='Number of CPUs used/Default: number of CPUs available')
-parser.add_argument('-d', '--condition_folder', type=str, help='Path to the condition folder.')
-parser.add_argument('-m', '--cpm', nargs='?', const='default', type=str, help='Perform CPM normalization with optional file argument')
-parser.add_argument('--test_type', choices=['ttest', 'pitest', 'ziw','wilcoxon','variance'], default='ttest', help='Test to perform and rank results.')
-args = parser.parse_args()
-
-# logging.basicConfig(filename = "chunk_processing.log", level = logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
-
-# Get the directory where the script is executed
-script_directory = os.path.dirname(os.path.abspath(__file__))
-
-# Define the log file path in the same directory as the script
-log_file_path = os.path.join(script_directory, "chunk_processing.log")
-
-# Configure logging to overwrite the log file if it already exists
-logging.basicConfig(
-    filename=log_file_path,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filemode='w'  # Use 'w' to overwrite the existing log file
-)
-
-logging.info("Log file created and ready for new logging.")
+import logging
+import math
 
 # ......................................................
 #
-#   GUESS INPUT SEPARATOR ----
+#   CONSTANTS ----
 #
 # ......................................................
-with open(args.input) as f:
-    head_lines = [next(f).rstrip() for x in range(2)]
+N_BASE_FACTOR = 10**10
+N_ROUND_NORM = 3
+N_ROUND_TEST = 1
+# For ZIW only
+CSTE_VARIANCE = 2 * math.sqrt(2 / math.pi)
 
-common_delimiters = [',', ';', '\t', ' ', '|', ':']
-for d in common_delimiters:
-    ref = head_lines[0].count(d)
-    if ref > 0:
-        if all([ ref == head_lines[i].count(d) for i in range(1, 2)]):
-            input_separator = d
 
 # ......................................................
 #
-#   ESTIMATE TOTAL NUMBER OF TAGS (LINES) ----
+#   FUNCTIONS ----
 #
 # ......................................................
 
-# Estimate the total number of lines (replacing the slower previous method)
-total_tags = estimate_total_lines(args.input)
 
-# Calculate the number of top tags at the start
-if 0 < args.top_tags <= 1:
-    # Convert percentage to an absolute number at the start
-    args.top_tags = int(args.top_tags * total_tags)
-else:
-    args.top_tags = int(args.top_tags)
-# ......................................................
-#
-#   EXECUTE STAT TEST ----
-#
-# ......................................................
-with open(args.input, 'r') as file:
-    header = file.readline().strip().split(input_separator)
+# Estimate total number of tags (lines)
 
-# Create a pool of processes
-pool = mp.Pool(processes = args.processes)
+def estimate_total_lines(file_path, sample_size=100):
+    """ Estimate the total number of lines in a file using a sample of size sample_size """
+    with open(file_path, 'r') as f:
+        # Read a sample of sample_size lines
+        sample_lines = [next(f) for _ in range(sample_size)]
+    
+    # Calculate the average line size in the sample
+    average_line_size = sum(len(line) for line in sample_lines) / sample_size
+    
+    # Get the total file size in bytes
+    file_size = os.path.getsize(file_path)
+    
+    # Estimate the total number of lines
+    estimated_total_lines = int(file_size / average_line_size)
+    
+    return estimated_total_lines
 
-top_tags_list = []
-condition_files = glob.glob(os.path.join(args.condition_folder, "*.tsv"))
-# For each condition, the matrix is sliced into chunks and each chunk is processed individually in a process
-condition_files = [file for file in condition_files if 'train' in os.path.basename(file)]
-for condition_file in condition_files:
-    # Create the data dictionary from the condition file
-    data_dict = create_data_dict(condition_file, args.test_type)
 
-    # Prepare the worker function which will be executed in a process
-    func = functools.partial(work_for_parallel_processes, data_dict, cpm_normalization = args.cpm, header = header, test_type = args.test_type)
+# Perform Pi-test
 
-    # result contains the stat test and the tag of all chunks
-    result = pool.imap(func, pd.read_csv(args.input, sep = input_separator, chunksize = args.chunk_size))
+def perform_pitest(tag, grp_a_data, grp_b_data):
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))
+    Pttest = perform_ttest(tag, grp_a_data, grp_b_data)
 
-    # For each chunk result (stored into result object), only the top k-mers are selected
-    top_tags = []
-    if args.test_type == 'pitest':
-        for chunk_results in result:
-            top_tags.extend([(tag_values, pivalue, log2fold_change) for tag_values, pivalue, log2fold_change in chunk_results])
+    if Pttest is not None and log2fold_change is not None and log2fold_change != 0:
+        pivalue = abs(log2fold_change * (-np.log10(Pttest[2])))
+        if not np.isnan(pivalue):  # Check for NaN 
+            return Pttest[2], np.round(pivalue, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST)
+    
 
-            top_tags.sort(key = lambda x: x[1])  # Sort based on pi_value
-            top_tags = top_tags[:args.top_tags]
-        top_tags_list.append(top_tags)
 
-    elif args.test_type == 'ttest' or args.test_type == 'wilcoxon':
-        for chunk_results in result:
-            top_tags.extend([(t_statistic, tag_values, p_value) for t_statistic, tag_values, p_value in chunk_results])
-            top_tags.sort(key = lambda x: x[0], reverse = True)  # Sort based on t-statistic
-            top_tags = top_tags[:args.top_tags]
-        top_tags_list.append(top_tags)
+# Perform T-test 
 
-    elif args.test_type == 'ziw':
-        for chunk_results in result:
-            top_tags.extend([(test_statistic, tag_values) for test_statistic, tag_values in chunk_results])
+def perform_ttest(tag, grp_a_data, grp_b_data):
+    grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
+    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)  
+    t_statistic, p_value = ttest_ind(grp_a_values, grp_b_values)
+    if not np.isnan(t_statistic):  # Check for NaN 
+        return tag, np.round(t_statistic, N_ROUND_TEST), p_value
+        
+       
+# Perform Wilcoxon Test
 
-            top_tags.sort(key = lambda x: x[0], reverse = True)  # Sort based on test-statistic
-            top_tags = top_tags[:args.top_tags]
-        top_tags_list.append(top_tags)
+def perform_wilcoxon_test(tag, grp_a_data, grp_b_data):
+    grp_a_data = grp_a_data.loc[tag].values
+    grp_b_data = grp_b_data.loc[tag].values
+    # Perform the Wilcoxon test
+    statistic, p_value = mannwhitneyu(grp_a_data, grp_b_data)
+    return tag, np.round(statistic, 2), p_value
 
-    elif args.test_type == 'variance':
-        for chunk_results in result:
-            print(chunk_results)
-            top_tags.extend([(variance_value, tag_values) for variance_value, tag_values in chunk_results])
-            top_tags.sort(key=lambda x: x[0], reverse=True)  # Sort based on variance (descending order)
-            top_tags = top_tags[:args.top_tags]
-        top_tags_list.append(top_tags)
+# Calculate variance of the modified Wilcoxon rank sum statistic
 
-    logging.info("Condition file treated")
+def calculate_variance_ziw(data_dict: dict, prop_mean: float, n: int) -> float:
+    # Calculate variance of the modified Wilcoxon rank sum statistic
+    # @prop_mean: a float, average proportion of zeros in both groups
+    prop_mean_complement = 1 - prop_mean
 
-if args.test_type == 'ttest' or args.test_type == 'wilcoxon' or args.test_type == 'ziw':
-    header.append('test_statistic')
-    header.append('p_value')
+    # Variance in the first group
+    v1 = prop_mean * prop_mean_complement
+    var1 =  data_dict["product_n_a_n_b"] * prop_mean * v1 * (n * prop_mean + 3 * prop_mean_complement / 2) + \
+    data_dict["sum_square_n_a_n_b"] * v1**2 * (5/4) + CSTE_VARIANCE * prop_mean * (n * v1)**(1.5) \
+    * data_dict["sqrt_product_n_a_n_b"]
+    var1 = var1 / 4
 
-elif args.test_type =='pitest':
-    header.append('pivalue')
-    header.append('log2foldchange')
-elif args.test_type == 'variance':
-    header.append('variance')
+    # Variance in the second group
+    var2 = data_dict["product_n_a_n_b"] * prop_mean**2 * (n * prop_mean + 1)/12
+    
+    # Variance of the modified Wilcoxon rank sum statistic
+    variance = var1 + var2
 
-# ......................................................
-#
-#   OUTPUT TOP K-MERS ----
-#
-# ......................................................
-# Save the top tags for each condition file to separate output files
-try:
-    # Delete output folder if it exists
-    shutil.rmtree(args.output_folder)
-except OSError:
-    pass
+    return variance
 
-os.makedirs(args.output_folder)
+# Perform ZIW
 
-for condition_file, top_tags in zip(condition_files, top_tags_list):
-    condition_name = os.path.basename(condition_file)
-    condition_name = os.path.splitext(condition_name)[0]  # Remove file extension if present
+def perform_ziw(tag, grp_a, grp_b, data_dict):
+    grp_a_counts = np.array(grp_a.loc[tag].values.flatten().tolist())
+    grp_b_counts = np.array(grp_b.loc[tag].values.flatten().tolist())
 
-    output_data = []
-    output_file = os.path.join(args.output_folder, f"{condition_name}.txt")
-    with open(output_file, 'w') as file:
-        file.write(' '.join(header) + '\n')
+    n_non_zero_grp_a = np.count_nonzero(grp_a_counts)
+    n_non_zero_grp_b = np.count_nonzero(grp_b_counts)
 
-        if args.test_type == 'ttest' or args.test_type == 'wilcoxon':
-            for t_statistic, values, p_value in top_tags:
-                output_data.append([values, t_statistic, p_value])
-                file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the tstat in the output table
+    # Proportion of non-zeros by group
+    prop_grp_a: float = n_non_zero_grp_a / data_dict["n_obs_grp_a"]
+    prop_grp_b: float = n_non_zero_grp_b / data_dict["n_obs_grp_b"]
 
-        elif args.test_type == 'ziw':
-            for test_statistic, values in top_tags:
-                output_data.append([values, test_statistic])
-                file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the tstat in the output table
+    prop_max: float = max(prop_grp_a, prop_grp_b)
+    prop_mean: float = np.mean([prop_grp_a, prop_grp_b])
 
-        elif args.test_type == 'pitest':
-            for values, pivalue,log2fold_change in top_tags:
-                output_data.append([values, pivalue, log2fold_change])
-                file.write(' '.join(str(x) for x in output_data[-1]) + '\n')
+    # Number of observations to keep in truncated groups
+    n_truncated_grp_a: int = round(prop_max * data_dict["n_obs_grp_a"])
+    n_truncated_grp_b: int = round(prop_max * data_dict["n_obs_grp_b"])
+    indices_seq: list = range(n_truncated_grp_a)
+    n_ziw: float = (n_truncated_grp_a + n_truncated_grp_b + 1) / 2
 
-        elif args.test_type == 'variance':
-            for variance_value, values in top_tags:
-                output_data.append([values, variance_value])
-                file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the variance in the output table
+    # Truncate arrays by removing certain zeros and concatenate arrays in a single one
+    non_zero_array = grp_a_counts[np.nonzero(grp_a_counts)]
+    zero_array = np.repeat([0], n_truncated_grp_a - n_non_zero_grp_a)
+    truncated_counts = np.concatenate((zero_array, non_zero_array))
 
-end_time = time.time()
-execution_time = end_time - start_time
-print("Execution time: {:.3f} s".format(execution_time))
+    non_zero_array = grp_b_counts[np.nonzero(grp_b_counts)]
+    zero_array = np.repeat([0], n_truncated_grp_b - n_non_zero_grp_b)
+    truncated_counts = np.concatenate((truncated_counts, zero_array, non_zero_array), dtype = float)
+    
+    # Mean of the modified Wilcoxon rank sum statistic
+    n_trun = n_truncated_grp_a + n_truncated_grp_b + 1
+    ranks = n_trun - rankdata(truncated_counts, method = "average")
+    r: float = ranks[indices_seq].sum() #np.sum(ranks[indices_seq]) not fastest
+    
+    s: float = r - n_truncated_grp_a * n_trun/2    
+
+    variance: float = calculate_variance_ziw(data_dict, prop_mean, data_dict["n_tot"])
+    
+    # Modified Wilcoxon rank sum statistic
+    if variance == 0:
+        w: float = 0
+    else:
+        w: float = s / math.sqrt(variance)
+
+    return tag, np.round(w, N_ROUND_TEST), 0
+
+
+# Perform variance and coefficient of variation (CV)
+def calculate_variance_and_cv(tag, data_chunk):
+    numeric_values = pd.to_numeric(data_chunk.loc[tag], errors='coerce')
+    numeric_values = numeric_values.dropna()
+
+    if not numeric_values.empty:
+        mean_value = np.mean(numeric_values)
+        std_dev_value = np.std(numeric_values)
+        variance_value = np.var(numeric_values)
+
+        if mean_value != 0:
+            cv_value = std_dev_value / mean_value
+
+            tag_values = ' '.join(
+                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                for x in data_chunk.loc[tag].values
+            )
+
+            return variance_value, cv_value, tag_values
+
+    return None
+
+
+def calculate_pre_statistics_for_ziw(data_dict: dict) -> dict:
+    # Calculate some statistics required to perform ZIW
+    data_dict["n_obs_grp_a"] = sum(1 for patient in data_dict.values() if patient == "A")
+    data_dict["n_obs_grp_b"] = sum(1 for patient in data_dict.values() if patient == "B")
+    data_dict["n_tot"] = data_dict["n_obs_grp_a"] + data_dict["n_obs_grp_b"]
+    data_dict["n_ziw"] = (data_dict["n_tot"] + 1) / 2
+    data_dict["product_n_a_n_b"] = data_dict["n_obs_grp_a"] * data_dict["n_obs_grp_b"]
+    data_dict["sum_square_n_a_n_b"] = data_dict["n_obs_grp_a"]**2 + data_dict["n_obs_grp_b"]**2
+    data_dict["sqrt_product_n_a_n_b"] = math.sqrt(data_dict["n_obs_grp_a"] * data_dict["n_obs_grp_b"])
+    
+    return data_dict
+
+
+
+# Function to create the data dictionary from the condition file
+def create_data_dict(condition_file, test_type):
+    data_dict = {}
+    conditions = {}
+
+    with open(condition_file, 'r') as file:
+        for line in file:
+            row = line.strip().split()
+            patient_id = row[0]
+            condition = row[1]
+            conditions.setdefault(condition, []).append(patient_id)
+
+    assigned_condition = 'A'
+    for condition, patients in sorted(conditions.items()):
+        for patient_id in patients:
+            data_dict[patient_id] = assigned_condition
+
+        assigned_condition = 'B' if assigned_condition == 'A' else 'A'
+
+    if test_type == "ziw":
+        data_dict = calculate_pre_statistics_for_ziw(data_dict)      
+
+    return data_dict
+
+
+
+# Normalize function
+def normalize(chunk, design_kmer_nb_file, header_row):
+    # Read design_kmer_nb_file as a DataFrame
+    design_kmer_nb = pd.read_csv(design_kmer_nb_file, delimiter=' ')
+    # Add header for the chunks
+    chunk.columns = header_row   
+    # If first line is equal to the header, remove the first line
+    if all(chunk.iloc[0] == header_row):
+        chunk = chunk.iloc[1:]
+    # Convert design_kmer_nb to a dictionary
+    kmer_nb_dict = dict(zip(design_kmer_nb.iloc[:, 0], design_kmer_nb.iloc[:, 1]))
+
+    # Apply normalization factors to each column
+    for column in chunk.columns:
+        if column in kmer_nb_dict:
+            normalization_factor = np.round((N_BASE_FACTOR / kmer_nb_dict[column]), N_ROUND_NORM)
+            # Apply normalization factor to numeric values only
+            chunk[column] = np.where(pd.notnull(chunk[column]), chunk[column] * np.round(normalization_factor, N_ROUND_NORM), chunk[column])
+
+    return chunk
+
+
+
+# Work function for the pool of processes
+def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type):
+    if cpm_normalization:
+        # Normalize the data chunk
+        normalized_chunk = normalize(data_chunk, cpm_normalization, header) 
+        grp_a_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'A']
+        grp_b_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'B']
+
+        grp_a_data = normalized_chunk[grp_a_patients]
+        grp_b_data = normalized_chunk[grp_b_patients]
+    else:
+        grp_a_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'A']]
+        grp_b_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'B']]
+        normalized_chunk = data_chunk
+    results = [] 
+    
+    if test_type == 'pitest':
+        for tag in data_chunk.index:
+            result = perform_pitest(tag, grp_a_data, grp_b_data)
+            if result is not None:
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((tag_values , abs(result[1]), result[2]))                
+
+    
+    elif test_type == 'ttest':
+        for tag in data_chunk.index:
+            result = perform_ttest(tag, grp_a_data, grp_b_data)
+            if result is not None:
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((abs(result[1]), tag_values, result[2]))
+
+    elif test_type == 'wilcoxon':
+        for tag in data_chunk.index:
+            result= perform_wilcoxon_test(tag,grp_a_data,grp_b_data)
+            if result is not None:
+                tag_values = ' '.join(
+                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((abs(result[1]), tag_values, result[2]))
+
+    elif test_type == "ziw":
+        for tag in data_chunk.index:
+            result = perform_ziw(tag, grp_a_data, grp_b_data, label_dict)
+            tag_values = ' '.join(
+                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                for x in data_chunk.loc[tag].values
+            )
+            results.append((abs(result[1]), tag_values))
+            # WIP
+            #kmer_values = data_chunk.loc[tag][1:].astype(float).round(1)
+            #tag_values = ' '.join(kmer_values.astype(str).tolist())
+            #results.append((abs(result[1]), tag_values)
+
+
+
+    elif test_type == "variance":  # "coefficient_variation"
+        for tag in normalized_chunk.index:
+            result = calculate_variance_and_cv(tag, normalized_chunk)
+            if result is not None:
+                variance_value, cv_value, tag_values = result
+                results.append((variance_value, cv_value, tag_values))
+            
+
+        
+
+    
+    logging.info(f"Chunk processed: {len(data_chunk)} rows")
+    return results
