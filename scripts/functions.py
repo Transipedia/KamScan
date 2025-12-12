@@ -7,6 +7,7 @@ import numpy as np
 from scipy.stats import ttest_ind
 from scipy.stats import rankdata
 from scipy.stats import mannwhitneyu
+import statsmodels.formula.api as smf
 import multiprocessing as mp
 import argparse
 import glob
@@ -63,27 +64,65 @@ def perform_pitest(tag, grp_a_data, grp_b_data):
         pivalue = abs(log2fold_change * (-np.log10(Pttest[2])))
         if not np.isnan(pivalue):  # Check for NaN 
             return Pttest[2], np.round(pivalue, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST)
+
+# Perform Covariate t-test 
+
+def perform_ancova(tag, grp_a_data, grp_b_data, covariates_df):
     
+    covariate_columns = list(covariates_df.columns)
+    
+    # 1. Extract expression values (log-transformed)
+    grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
+    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)
 
+    # 2. Build sample order matching the expression data
+    sample_order = list(grp_a_data.columns) + list(grp_b_data.columns)
 
-# Perform T-test 
+    # 3. Align covariates safely
+    cov_aligned = covariates_df.loc[sample_order, covariate_columns].reset_index(drop=True)
 
+    # 4. Build analysis DataFrame
+    df = pd.DataFrame({
+        "y": np.concatenate([grp_a_values, grp_b_values]),
+        "group": ["A"] * len(grp_a_values) + ["B"] * len(grp_b_values),
+    })
+
+    df[covariate_columns] = cov_aligned
+
+    # 5. Fit regression
+    formula = "y ~ group + " + " + ".join(covariate_columns)
+    model = smf.ols(formula, data=df).fit()
+
+    # Find the correct coefficient name for the group comparison
+    group_coef = "group[T.B]" if "group[T.B]" in model.pvalues else "group"
+
+    # 6. Log2FC (same as your original)
+    log2fold_change = np.log2(
+        np.mean(grp_a_data.loc[tag].values + 1) /
+        np.mean(grp_b_data.loc[tag].values + 1)
+    )
+    
+    p_value = model.pvalues[group_coef]
+
+    return str(tag), np.round(model.tvalues[group_coef], N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
+        
 def perform_ttest(tag, grp_a_data, grp_b_data):
     grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
-    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)  
+    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))  
     t_statistic, p_value = ttest_ind(grp_a_values, grp_b_values)
     if not np.isnan(t_statistic):  # Check for NaN 
-        return tag, np.round(t_statistic, N_ROUND_TEST), p_value
-        
+        return str(tag), np.round(t_statistic, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
        
 # Perform Wilcoxon Test
 
 def perform_wilcoxon_test(tag, grp_a_data, grp_b_data):
     grp_a_data = grp_a_data.loc[tag].values
     grp_b_data = grp_b_data.loc[tag].values
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))  
     # Perform the Wilcoxon test
     statistic, p_value = mannwhitneyu(grp_a_data, grp_b_data)
-    return tag, np.round(statistic, 2), p_value
+    return str(tag), np.round(statistic, 2), np.round(log2fold_change, N_ROUND_TEST), p_value
 
 # Calculate variance of the modified Wilcoxon rank sum statistic
 
@@ -243,7 +282,7 @@ def normalize(chunk, design_kmer_nb_file, header_row):
 
 
 # Work function for the pool of processes
-def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type):
+def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type, covariates_df):
     if cpm_normalization:
         # Normalize the data chunk
         normalized_chunk = normalize(data_chunk, cpm_normalization, header) 
@@ -268,16 +307,25 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
                 )
                 results.append((tag_values , abs(result[1]), result[2]))                
 
+    elif test_type == 'ancova':
+        for tag in data_chunk.index:
+            result = perform_ancova(tag, grp_a_data, grp_b_data, covariates_df)
+            if result is not None:
+                tag_values = ' '.join(
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
     
     elif test_type == 'ttest':
         for tag in data_chunk.index:
             result = perform_ttest(tag, grp_a_data, grp_b_data)
             if result is not None:
                 tag_values = ' '.join(
-                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                     for x in data_chunk.loc[tag].values
                 )
-                results.append((abs(result[1]), tag_values, result[2]))
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
 
     elif test_type == 'wilcoxon':
         for tag in data_chunk.index:
