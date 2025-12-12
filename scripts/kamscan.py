@@ -26,10 +26,8 @@ args = parser.parse_args()
 # Get the directory where the script is executed
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
-os.makedirs(args.output_folder, exist_ok=True)
-
 # Define the log file path in the same directory as the script
-log_file_path = os.path.join(args.output_folder, "chunk_processing.log")
+log_file_path = os.path.join(script_directory, "chunk_processing.log")
 
 # Configure logging to overwrite the log file if it already exists
 logging.basicConfig(
@@ -174,6 +172,8 @@ try:
     shutil.rmtree(args.output_folder)
 except OSError:
     pass
+    
+os.makedirs(args.output_folder)
 
 for condition_file, top_tags in zip(condition_files, top_tags_list):
     condition_name = os.path.basename(condition_file)
