@@ -16,18 +16,18 @@ parser.add_argument('-c', '--chunk_size', type=int, default=10000, help='Size of
 parser.add_argument('-p', '--processes', type=int, default=mp.cpu_count(), help='Number of CPUs used/Default: number of CPUs available')
 parser.add_argument('-d', '--condition_folder', type=str, help='Path to the condition folder.')
 parser.add_argument('-m', '--cpm', nargs='?', const='default', type=str, help='Perform CPM normalization with optional file argument')
-parser.add_argument('--test_type', choices=['ttest', 'pitest', 'ziw','wilcoxon','variance', 'ancova'], default='ttest', help='Test to perform and rank results.')
+parser.add_argument('--test_type', choices=['ttest', 'pitest', 'ziw','wilcoxon','variance', 'anova'], default='ttest', help='Test to perform and rank results.')
 parser.add_argument('--covariates', type=str, default='no', help='Path to covariate CSV file or "no" to disable')
 
 args = parser.parse_args()
 
-# logging.basicConfig(filename = "chunk_processing.log", level = logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename = "chunk_processing.log", level = logging.INFO, format = '%(asctime)s - %(levelname)s - %(message)s')
 
 # Get the directory where the script is executed
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Define the log file path in the same directory as the script
-log_file_path = os.path.join(script_directory, "chunk_processing.log")
+log_file_path = os.path.join(args.script_directory, "chunk_processing.log")
 
 # Configure logging to overwrite the log file if it already exists
 logging.basicConfig(
@@ -124,7 +124,7 @@ for condition_file in condition_files:
             top_tags = top_tags[:args.top_tags]
         top_tags_list.append(top_tags)
 
-    elif args.test_type == 'ttest' or args.test_type == 'ancova' or args.test_type == 'wilcoxon':
+    elif args.test_type == 'ttest' or args.test_type == 'anova' or args.test_type == 'wilcoxon':
         for chunk_results in result:
             top_tags.extend([(t_statistic, tag_values, log2fold_change, p_value) for t_statistic, tag_values, log2fold_change, p_value in chunk_results])
             top_tags.sort(key = lambda x: x[0], reverse = True)  # Sort based on t-statistic
@@ -149,7 +149,7 @@ for condition_file in condition_files:
 
     logging.info("Condition file treated")
 
-if args.test_type == 'ttest' or args.test_type == 'ancova' or args.test_type == 'wilcoxon' or args.test_type == 'ziw':
+if args.test_type == 'ttest' or args.test_type == 'anova' or args.test_type == 'wilcoxon' or args.test_type == 'ziw':
     header.append('test_statistic')
     header.append('log2foldchange')
     header.append('p_value')
@@ -172,7 +172,7 @@ try:
     shutil.rmtree(args.output_folder)
 except OSError:
     pass
-    
+
 os.makedirs(args.output_folder)
 
 for condition_file, top_tags in zip(condition_files, top_tags_list):
@@ -184,7 +184,7 @@ for condition_file, top_tags in zip(condition_files, top_tags_list):
     with open(output_file, 'w') as file:
         file.write(' '.join(header) + '\n')
 
-        if args.test_type == 'ttest' or args.test_type == 'ancova' or args.test_type == 'wilcoxon':
+        if args.test_type == 'ttest' or args.test_type == 'anova' or args.test_type == 'wilcoxon':
             for t_statistic, values, log2fold_change, p_value in top_tags:
                 output_data.append([values, t_statistic, log2fold_change, p_value])
                 file.write(f"{values} {round(t_statistic, 2):g} {round(log2fold_change, 2):g} {p_value:.2g}\n")

@@ -65,9 +65,9 @@ def perform_pitest(tag, grp_a_data, grp_b_data):
         if not np.isnan(pivalue):  # Check for NaN 
             return Pttest[2], np.round(pivalue, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST)
 
-# Perform Covariate t-test 
+# Perform anova test with covariable
 
-def perform_ancova(tag, grp_a_data, grp_b_data, covariates_df):
+def perform_anova(tag, grp_a_data, grp_b_data, covariates_df):
     
     covariate_columns = list(covariates_df.columns)
     
@@ -96,16 +96,15 @@ def perform_ancova(tag, grp_a_data, grp_b_data, covariates_df):
     # Find the correct coefficient name for the group comparison
     group_coef = "group[T.B]" if "group[T.B]" in model.pvalues else "group"
 
-    # 6. Log2FC (same as your original)
-    log2fold_change = np.log2(
-        np.mean(grp_a_data.loc[tag].values + 1) /
-        np.mean(grp_b_data.loc[tag].values + 1)
-    )
+    # 6. Log2FC
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))
     
     p_value = model.pvalues[group_coef]
 
     return str(tag), np.round(model.tvalues[group_coef], N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
-        
+
+# Perform T-test
+
 def perform_ttest(tag, grp_a_data, grp_b_data):
     grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
     grp_b_values = np.log(grp_b_data.loc[tag].values + 1)
@@ -117,12 +116,12 @@ def perform_ttest(tag, grp_a_data, grp_b_data):
 # Perform Wilcoxon Test
 
 def perform_wilcoxon_test(tag, grp_a_data, grp_b_data):
-    grp_a_data = grp_a_data.loc[tag].values
-    grp_b_data = grp_b_data.loc[tag].values
-    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))  
+    grp_a_values = grp_a_data.loc[tag].values
+    grp_b_values = grp_b_data.loc[tag].values
+    log2fold_change = np.log2(np.mean(grp_a_values + 1) / np.mean(grp_b_values + 1))  
     # Perform the Wilcoxon test
-    statistic, p_value = mannwhitneyu(grp_a_data, grp_b_data)
-    return str(tag), np.round(statistic, 2), np.round(log2fold_change, N_ROUND_TEST), p_value
+    statistic, p_value = mannwhitneyu(grp_a_values, grp_b_values)
+    return str(tag), np.round(statistic, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
 
 # Calculate variance of the modified Wilcoxon rank sum statistic
 
@@ -307,9 +306,9 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
                 )
                 results.append((tag_values , abs(result[1]), result[2]))                
 
-    elif test_type == 'ancova':
+    elif test_type == 'anova':
         for tag in data_chunk.index:
-            result = perform_ancova(tag, grp_a_data, grp_b_data, covariates_df)
+            result = perform_anova(tag, grp_a_data, grp_b_data, covariates_df)
             if result is not None:
                 tag_values = ' '.join(
                     f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
@@ -329,13 +328,13 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
 
     elif test_type == 'wilcoxon':
         for tag in data_chunk.index:
-            result= perform_wilcoxon_test(tag,grp_a_data,grp_b_data)
+            result= perform_wilcoxon_test(tag, grp_a_data,grp_b_data)
             if result is not None:
                 tag_values = ' '.join(
-                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                     for x in data_chunk.loc[tag].values
                 )
-                results.append((abs(result[1]), tag_values, result[2]))
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
 
     elif test_type == "ziw":
         for tag in data_chunk.index:
