@@ -15,7 +15,8 @@ parser.add_argument('-t', '--top_tags', type=float, default=200000, help='Top ta
 parser.add_argument('-c', '--chunk_size', type=int, default=10000, help='Size of each chunk in number of rows.')
 parser.add_argument('-p', '--processes', type=int, default=mp.cpu_count(), help='Number of CPUs used/Default: number of CPUs available')
 parser.add_argument('-d', '--condition_folder', type=str, help='Path to the condition folder.')
-parser.add_argument('-m', '--cpm', nargs='?', const='default', type=str, help='Perform CPM normalization with optional file argument')
+parser.add_argument('-n', '--normalize', nargs='?', const='default', type=str, help='Perform CPM normalization providing total k-mers file')
+parser.add_argument('-f', '--norm_factor', type=int, default=1000000, help='Normalization factor')
 parser.add_argument('--test_type', choices=['ttest', 'pitest', 'ziw','wilcoxon','variance', 'anova'], default='ttest', help='Test to perform and rank results.')
 parser.add_argument('--covariates', type=str, default='no', help='Path to covariate CSV file or "no" to disable')
 
@@ -27,7 +28,7 @@ logging.basicConfig(filename = "chunk_processing.log", level = logging.INFO, for
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
 # Define the log file path in the same directory as the script
-log_file_path = os.path.join(args.script_directory, "chunk_processing.log")
+log_file_path = os.path.join(script_directory, "chunk_processing.log")
 
 # Configure logging to overwrite the log file if it already exists
 logging.basicConfig(
@@ -109,7 +110,8 @@ for condition_file in condition_files:
     data_dict = create_data_dict(condition_file, args.test_type)
 
     # Prepare the worker function which will be executed in a process
-    func = functools.partial(work_for_parallel_processes, data_dict, cpm_normalization = args.cpm, header = header, test_type = args.test_type, covariates_df = covariates_df)
+    func = functools.partial(work_for_parallel_processes, data_dict, cpm_normalization = args.normalize, header = header,
+    test_type = args.test_type, covariates_df = covariates_df, norm_factor_c = args.norm_factor)
 
     # result contains the stat test and the tag of all chunks
     result = pool.imap(func, pd.read_csv(args.input, sep = input_separator, chunksize = args.chunk_size))

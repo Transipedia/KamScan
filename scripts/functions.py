@@ -20,7 +20,6 @@ import math
 #   CONSTANTS ----
 #
 # ......................................................
-N_BASE_FACTOR = 10**10
 N_ROUND_NORM = 3
 N_ROUND_TEST = 1
 # For ZIW only
@@ -219,8 +218,8 @@ def calculate_variance_and_cv(tag, data_chunk):
 
 def calculate_pre_statistics_for_ziw(data_dict: dict) -> dict:
     # Calculate some statistics required to perform ZIW
-    data_dict["n_obs_grp_a"] = sum(1 for patient in data_dict.values() if patient == "A")
-    data_dict["n_obs_grp_b"] = sum(1 for patient in data_dict.values() if patient == "B")
+    data_dict["n_obs_grp_a"] = sum(1 for sample in data_dict.values() if sample == "A")
+    data_dict["n_obs_grp_b"] = sum(1 for sample in data_dict.values() if sample == "B")
     data_dict["n_tot"] = data_dict["n_obs_grp_a"] + data_dict["n_obs_grp_b"]
     data_dict["n_ziw"] = (data_dict["n_tot"] + 1) / 2
     data_dict["product_n_a_n_b"] = data_dict["n_obs_grp_a"] * data_dict["n_obs_grp_b"]
@@ -239,14 +238,14 @@ def create_data_dict(condition_file, test_type):
     with open(condition_file, 'r') as file:
         for line in file:
             row = line.strip().split()
-            patient_id = row[0]
+            sample_id = row[0]
             condition = row[1]
-            conditions.setdefault(condition, []).append(patient_id)
+            conditions.setdefault(condition, []).append(sample_id)
 
     assigned_condition = 'A'
-    for condition, patients in sorted(conditions.items()):
-        for patient_id in patients:
-            data_dict[patient_id] = assigned_condition
+    for condition, samples in sorted(conditions.items()):
+        for sample_id in samples:
+            data_dict[sample_id] = assigned_condition
 
         assigned_condition = 'B' if assigned_condition == 'A' else 'A'
 
@@ -258,7 +257,7 @@ def create_data_dict(condition_file, test_type):
 
 
 # Normalize function
-def normalize(chunk, design_kmer_nb_file, header_row):
+def normalize(chunk, design_kmer_nb_file, header_row, norm_factor):
     # Read design_kmer_nb_file as a DataFrame
     design_kmer_nb = pd.read_csv(design_kmer_nb_file, delimiter=' ')
     # Add header for the chunks
@@ -272,27 +271,27 @@ def normalize(chunk, design_kmer_nb_file, header_row):
     # Apply normalization factors to each column
     for column in chunk.columns:
         if column in kmer_nb_dict:
-            normalization_factor = np.round((N_BASE_FACTOR / kmer_nb_dict[column]), N_ROUND_NORM)
+            normalization_factor = norm_factor / kmer_nb_dict[column]
             # Apply normalization factor to numeric values only
-            chunk[column] = np.where(pd.notnull(chunk[column]), chunk[column] * np.round(normalization_factor, N_ROUND_NORM), chunk[column])
+            chunk[column] = np.where(pd.notnull(chunk[column]), np.round(chunk[column] * normalization_factor, N_ROUND_NORM), chunk[column])
 
     return chunk
 
 
 
 # Work function for the pool of processes
-def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type, covariates_df):
+def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type, covariates_df, norm_factor_c):
     if cpm_normalization:
         # Normalize the data chunk
-        normalized_chunk = normalize(data_chunk, cpm_normalization, header) 
-        grp_a_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'A']
-        grp_b_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'B']
+        normalized_chunk = normalize(data_chunk, cpm_normalization, header, norm_factor_c) 
+        grp_a_samples = [sample_id for sample_id, condition in label_dict.items() if condition == 'A']
+        grp_b_samples = [sample_id for sample_id, condition in label_dict.items() if condition == 'B']
 
-        grp_a_data = normalized_chunk[grp_a_patients]
-        grp_b_data = normalized_chunk[grp_b_patients]
+        grp_a_data = normalized_chunk[grp_a_samples]
+        grp_b_data = normalized_chunk[grp_b_samples]
     else:
-        grp_a_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'A']]
-        grp_b_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'B']]
+        grp_a_data = data_chunk[[sample_id for sample_id, condition in label_dict.items() if condition == 'A']]
+        grp_b_data = data_chunk[[sample_id for sample_id, condition in label_dict.items() if condition == 'B']]
         normalized_chunk = data_chunk
     results = [] 
     

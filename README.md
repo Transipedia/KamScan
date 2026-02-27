@@ -1,13 +1,13 @@
 # KamScan
 # Perform parallel statistical tests over k-mer or contig count matrices
-This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test and zero inflated wilcoxon test.
+This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test, zero inflated wilcoxon test, and anova.
 ## Usage:
 ```
 python3 kamscan.py [options]
 ```
 ## Arguments:
 - `-i, --input`  
-  Input file path containing the k-mer matrix  
+  Input file path containing the count matrix  
 
 - `-o, --output_folder`  
   Folder path where the statistical test results will be stored. (You don't have to create the folder)  
@@ -26,13 +26,13 @@ python3 kamscan.py [options]
 - `-d, --condition_folder`  
   Folder path containing the design files that will be processed.  
 
-- `-m, --cpm`  
-  Perform Counts Per Million (CPM) normalization using a file containing the total number of k-mers for each patient.
+- `-n, --normalize`  
+  Perform Counts Per Million (CPM) normalization ((raw_abundance * 1 000 000) / number_of_kmers_in_the_dataset), using a file containing the total number of k-mers for each sample.
   The file should be a text file with two columns separated by a space, formatted as the `design_kmers_nb_per_patient` file in the GitHub repository.
   
 - `--test_type`  
   Specify the type of statistical test to be performed.  
-  Choices: ttest (t-test), pitest (pi-test), wilcoxon (Wilcoxon signed-rank test), variance  
+  Choices: ttest (t-test), pitest (pi-test), wilcoxon (Wilcoxon signed-rank test), variance, anova (Analysis of variance)  
   Default: ttest.  
 
 ## Example Usage:
@@ -40,10 +40,10 @@ python3 kamscan.py [options]
 python3 kamscan.py -i kmer_count_matrix -o results_folder -t 10000 -c 5000 -p 8 -d condition_folder -m normalization_file.txt --test_type ttest
 ```
 ## Note:
-- Make sure to provide the correct condition folder to store the design files. The script accepts various design files as input, each containing a table with the patient_id in the first column and their corresponding condition in the second column. For example, condition can be normal or tumoral.
+- Make sure to provide the correct condition folder to store the design files. The script accepts various design files as input, each containing a table with the sample_id in the first column and their corresponding condition in the second column. For example, condition can be normal or tumoral.
 - The script uses parallel processing with multiple CPUs to speed up the computation of statistical tests.
 - The number of top tags meeting the statistical criteria  will be selected and stored in a file in the output folder.
-- If `--cpm  normalization_file.txt` is provided, the script will perform Counts Per Million (CPM) normalization using this file, otherwise, the statistical test is performed without normalization.
+- If `--normalize normalization_file.txt` is provided, the script will perform Counts Per Million (CPM) normalization using this file, otherwise, the statistical test is performed without normalization.
 
 ## Dependecies:
 To run this script, you will need the following Python packages:
