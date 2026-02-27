@@ -1,6 +1,6 @@
 # KamScan
 # Perform parallel statistical tests over k-mer or contig count matrices
-This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test, zero inflated wilcoxon test, and anova.
+This script performs various statistical tests on a k-mer count matrix using parallel processing. It allows to rank the statistical results and select the top results in output files.The script supports different types of statistical tests, including t-test, pi-test, variance, Wilcoxon test, zero inflated wilcoxon test, and ANOVA.
 ## Usage:
 ```
 python3 kamscan.py [options]
@@ -28,12 +28,15 @@ python3 kamscan.py [options]
 
 - `-n, --normalize`  
   Perform Counts Per Million (CPM) normalization ((raw_abundance * 1 000 000) / number_of_kmers_in_the_dataset), using a file containing the total number of k-mers for each sample.
-  The file should be a text file with two columns separated by a space, formatted as the `design_kmers_nb_per_patient` file in the GitHub repository.
+  The file should be a text file with two columns separated by a space or tabs, formatted as the `design_kmers_nb_per_patient` file in the GitHub repository.
   
 - `--test_type`  
   Specify the type of statistical test to be performed.  
-  Choices: ttest (t-test), pitest (pi-test), wilcoxon (Wilcoxon signed-rank test), variance, anova (Analysis of variance)  
+  Choices: ttest (t-test), pitest (pi-test), wilcoxon (Wilcoxon signed-rank test), variance, anova (Analysis of variance + covariates)  
   Default: ttest.  
+ 
+- `--covariates`
+  File with covariates option for the (Analysis of variance + covariates) statistical test,  formatted as the `covariates_file.tsv` file in the GitHub repository.
 
 ## Example Usage:
 ```
@@ -44,6 +47,7 @@ python3 kamscan.py -i kmer_count_matrix -o results_folder -t 10000 -c 5000 -p 8 
 - The script uses parallel processing with multiple CPUs to speed up the computation of statistical tests.
 - The number of top tags meeting the statistical criteria  will be selected and stored in a file in the output folder.
 - If `--normalize normalization_file.txt` is provided, the script will perform Counts Per Million (CPM) normalization using this file, otherwise, the statistical test is performed without normalization.
+- The --test_type anova is a linear regression, allowing group effects to be tested while controlling for covariates in the form y ~ group + covariates. You will need to provide a tab-separated file with header, with the sample_id in the first column and then the covariates.
 
 ## Dependecies:
 To run this script, you will need the following Python packages:
