@@ -135,8 +135,7 @@ for condition_file in condition_files:
 
     elif args.test_type == 'ziw':
         for chunk_results in result:
-            top_tags.extend([(test_statistic, tag_values) for test_statistic, tag_values in chunk_results])
-
+            top_tags.extend([(test_statistic, tag_values, log2fold_change, p_value) for test_statistic, tag_values, log2fold_change, p_value in chunk_results])
             top_tags.sort(key = lambda x: x[0], reverse = True)  # Sort based on test-statistic
             top_tags = top_tags[:args.top_tags]
         top_tags_list.append(top_tags)
@@ -193,9 +192,9 @@ for condition_file, top_tags in zip(condition_files, top_tags_list):
 
 
         elif args.test_type == 'ziw':
-            for test_statistic, values in top_tags:
-                output_data.append([values, test_statistic])
-                file.write(' '.join(str(x) for x in output_data[-1]) + '\n')  # to include the tstat in the output table
+            for test_statistic, values, log2fold_change, p_value in top_tags:
+                output_data.append([values, test_statistic, log2fold_change, p_value])
+                file.write(f"{values} {round(test_statistic, 2):g} {round(log2fold_change, 2):g} {p_value:.2g}\n")
 
         elif args.test_type == 'pitest':
             for values, pivalue,log2fold_change in top_tags:

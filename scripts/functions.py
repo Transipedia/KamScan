@@ -7,6 +7,7 @@ import numpy as np
 from scipy.stats import ttest_ind
 from scipy.stats import rankdata
 from scipy.stats import mannwhitneyu
+from scipy.stats import norm
 import statsmodels.formula.api as smf
 import multiprocessing as mp
 import argparse
@@ -189,8 +190,14 @@ def perform_ziw(tag, grp_a, grp_b, data_dict):
         w: float = 0
     else:
         w: float = s / math.sqrt(variance)
+    
+    # Compute p-value
+    p_value = 2 * norm.sf(abs(w))
 
-    return tag, np.round(w, N_ROUND_TEST), 0
+    # Compute log2 Fold-change
+    log2fold_change = np.log2(np.mean(grp_a.loc[tag].values + 1) / np.mean(grp_b.loc[tag].values + 1))
+
+    return tag, np.round(w, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
 
 
 # Perform variance and coefficient of variation (CV)
@@ -339,10 +346,10 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
         for tag in data_chunk.index:
             result = perform_ziw(tag, grp_a_data, grp_b_data, label_dict)
             tag_values = ' '.join(
-                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                 for x in data_chunk.loc[tag].values
             )
-            results.append((abs(result[1]), tag_values))
+            results.append((abs(result[1]), tag_values, result[2], result[3]))
             # WIP
             #kmer_values = data_chunk.loc[tag][1:].astype(float).round(1)
             #tag_values = ' '.join(kmer_values.astype(str).tolist())
