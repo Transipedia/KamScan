@@ -7,6 +7,8 @@ import numpy as np
 from scipy.stats import ttest_ind
 from scipy.stats import rankdata
 from scipy.stats import mannwhitneyu
+from scipy.stats import norm
+import statsmodels.formula.api as smf
 import multiprocessing as mp
 import argparse
 import glob
@@ -19,7 +21,6 @@ import math
 #   CONSTANTS ----
 #
 # ......................................................
-N_BASE_FACTOR = 10**10
 N_ROUND_NORM = 3
 N_ROUND_TEST = 1
 # For ZIW only
@@ -63,27 +64,64 @@ def perform_pitest(tag, grp_a_data, grp_b_data):
         pivalue = abs(log2fold_change * (-np.log10(Pttest[2])))
         if not np.isnan(pivalue):  # Check for NaN 
             return Pttest[2], np.round(pivalue, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST)
+
+# Perform anova test with covariable
+
+def perform_anova(tag, grp_a_data, grp_b_data, covariates_df):
     
+    covariate_columns = list(covariates_df.columns)
+    
+    # 1. Extract expression values (log-transformed)
+    grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
+    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)
 
+    # 2. Build sample order matching the expression data
+    sample_order = list(grp_a_data.columns) + list(grp_b_data.columns)
 
-# Perform T-test 
+    # 3. Align covariates safely
+    cov_aligned = covariates_df.loc[sample_order, covariate_columns].reset_index(drop=True)
+
+    # 4. Build analysis DataFrame
+    df = pd.DataFrame({
+        "y": np.concatenate([grp_a_values, grp_b_values]),
+        "group": ["A"] * len(grp_a_values) + ["B"] * len(grp_b_values),
+    })
+
+    df[covariate_columns] = cov_aligned
+
+    # 5. Fit regression
+    formula = "y ~ group + " + " + ".join(covariate_columns)
+    model = smf.ols(formula, data=df).fit()
+
+    # Find the correct coefficient name for the group comparison
+    group_coef = "group[T.B]" if "group[T.B]" in model.pvalues else "group"
+
+    # 6. Log2FC
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))
+    
+    p_value = model.pvalues[group_coef]
+
+    return str(tag), np.round(model.tvalues[group_coef], N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
+
+# Perform T-test
 
 def perform_ttest(tag, grp_a_data, grp_b_data):
     grp_a_values = np.log(grp_a_data.loc[tag].values + 1)
-    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)  
+    grp_b_values = np.log(grp_b_data.loc[tag].values + 1)
+    log2fold_change = np.log2(np.mean(grp_a_data.loc[tag].values + 1) / np.mean(grp_b_data.loc[tag].values + 1))  
     t_statistic, p_value = ttest_ind(grp_a_values, grp_b_values)
     if not np.isnan(t_statistic):  # Check for NaN 
-        return tag, np.round(t_statistic, N_ROUND_TEST), p_value
-        
+        return str(tag), np.round(t_statistic, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
        
 # Perform Wilcoxon Test
 
 def perform_wilcoxon_test(tag, grp_a_data, grp_b_data):
-    grp_a_data = grp_a_data.loc[tag].values
-    grp_b_data = grp_b_data.loc[tag].values
+    grp_a_values = grp_a_data.loc[tag].values
+    grp_b_values = grp_b_data.loc[tag].values
+    log2fold_change = np.log2(np.mean(grp_a_values + 1) / np.mean(grp_b_values + 1))  
     # Perform the Wilcoxon test
-    statistic, p_value = mannwhitneyu(grp_a_data, grp_b_data)
-    return tag, np.round(statistic, 2), p_value
+    statistic, p_value = mannwhitneyu(grp_a_values, grp_b_values)
+    return str(tag), np.round(statistic, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
 
 # Calculate variance of the modified Wilcoxon rank sum statistic
 
@@ -152,8 +190,14 @@ def perform_ziw(tag, grp_a, grp_b, data_dict):
         w: float = 0
     else:
         w: float = s / math.sqrt(variance)
+    
+    # Compute p-value
+    p_value = 2 * norm.sf(abs(w))
 
-    return tag, np.round(w, N_ROUND_TEST), 0
+    # Compute log2 Fold-change
+    log2fold_change = np.log2(np.mean(grp_a.loc[tag].values + 1) / np.mean(grp_b.loc[tag].values + 1))
+
+    return tag, np.round(w, N_ROUND_TEST), np.round(log2fold_change, N_ROUND_TEST), p_value
 
 
 # Perform variance and coefficient of variation (CV)
@@ -181,8 +225,8 @@ def calculate_variance_and_cv(tag, data_chunk):
 
 def calculate_pre_statistics_for_ziw(data_dict: dict) -> dict:
     # Calculate some statistics required to perform ZIW
-    data_dict["n_obs_grp_a"] = sum(1 for patient in data_dict.values() if patient == "A")
-    data_dict["n_obs_grp_b"] = sum(1 for patient in data_dict.values() if patient == "B")
+    data_dict["n_obs_grp_a"] = sum(1 for sample in data_dict.values() if sample == "A")
+    data_dict["n_obs_grp_b"] = sum(1 for sample in data_dict.values() if sample == "B")
     data_dict["n_tot"] = data_dict["n_obs_grp_a"] + data_dict["n_obs_grp_b"]
     data_dict["n_ziw"] = (data_dict["n_tot"] + 1) / 2
     data_dict["product_n_a_n_b"] = data_dict["n_obs_grp_a"] * data_dict["n_obs_grp_b"]
@@ -201,14 +245,14 @@ def create_data_dict(condition_file, test_type):
     with open(condition_file, 'r') as file:
         for line in file:
             row = line.strip().split()
-            patient_id = row[0]
+            sample_id = row[0]
             condition = row[1]
-            conditions.setdefault(condition, []).append(patient_id)
+            conditions.setdefault(condition, []).append(sample_id)
 
     assigned_condition = 'A'
-    for condition, patients in sorted(conditions.items()):
-        for patient_id in patients:
-            data_dict[patient_id] = assigned_condition
+    for condition, samples in sorted(conditions.items()):
+        for sample_id in samples:
+            data_dict[sample_id] = assigned_condition
 
         assigned_condition = 'B' if assigned_condition == 'A' else 'A'
 
@@ -220,7 +264,7 @@ def create_data_dict(condition_file, test_type):
 
 
 # Normalize function
-def normalize(chunk, design_kmer_nb_file, header_row):
+def normalize(chunk, design_kmer_nb_file, header_row, norm_factor):
     # Read design_kmer_nb_file as a DataFrame
     design_kmer_nb = pd.read_csv(design_kmer_nb_file, delimiter=' ')
     # Add header for the chunks
@@ -234,27 +278,27 @@ def normalize(chunk, design_kmer_nb_file, header_row):
     # Apply normalization factors to each column
     for column in chunk.columns:
         if column in kmer_nb_dict:
-            normalization_factor = np.round((N_BASE_FACTOR / kmer_nb_dict[column]), N_ROUND_NORM)
+            normalization_factor = norm_factor / kmer_nb_dict[column]
             # Apply normalization factor to numeric values only
-            chunk[column] = np.where(pd.notnull(chunk[column]), chunk[column] * np.round(normalization_factor, N_ROUND_NORM), chunk[column])
+            chunk[column] = np.where(pd.notnull(chunk[column]), np.round(chunk[column] * normalization_factor, N_ROUND_NORM), chunk[column])
 
     return chunk
 
 
 
 # Work function for the pool of processes
-def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type):
+def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, header, test_type, covariates_df, norm_factor_c):
     if cpm_normalization:
         # Normalize the data chunk
-        normalized_chunk = normalize(data_chunk, cpm_normalization, header) 
-        grp_a_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'A']
-        grp_b_patients = [patient_id for patient_id, condition in label_dict.items() if condition == 'B']
+        normalized_chunk = normalize(data_chunk, cpm_normalization, header, norm_factor_c) 
+        grp_a_samples = [sample_id for sample_id, condition in label_dict.items() if condition == 'A']
+        grp_b_samples = [sample_id for sample_id, condition in label_dict.items() if condition == 'B']
 
-        grp_a_data = normalized_chunk[grp_a_patients]
-        grp_b_data = normalized_chunk[grp_b_patients]
+        grp_a_data = normalized_chunk[grp_a_samples]
+        grp_b_data = normalized_chunk[grp_b_samples]
     else:
-        grp_a_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'A']]
-        grp_b_data = data_chunk[[patient_id for patient_id, condition in label_dict.items() if condition == 'B']]
+        grp_a_data = data_chunk[[sample_id for sample_id, condition in label_dict.items() if condition == 'A']]
+        grp_b_data = data_chunk[[sample_id for sample_id, condition in label_dict.items() if condition == 'B']]
         normalized_chunk = data_chunk
     results = [] 
     
@@ -268,35 +312,44 @@ def work_for_parallel_processes(label_dict, data_chunk, cpm_normalization, heade
                 )
                 results.append((tag_values , abs(result[1]), result[2]))                
 
+    elif test_type == 'anova':
+        for tag in data_chunk.index:
+            result = perform_anova(tag, grp_a_data, grp_b_data, covariates_df)
+            if result is not None:
+                tag_values = ' '.join(
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    for x in data_chunk.loc[tag].values
+                )
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
     
     elif test_type == 'ttest':
         for tag in data_chunk.index:
             result = perform_ttest(tag, grp_a_data, grp_b_data)
             if result is not None:
                 tag_values = ' '.join(
-                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                     for x in data_chunk.loc[tag].values
                 )
-                results.append((abs(result[1]), tag_values, result[2]))
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
 
     elif test_type == 'wilcoxon':
         for tag in data_chunk.index:
-            result= perform_wilcoxon_test(tag,grp_a_data,grp_b_data)
+            result= perform_wilcoxon_test(tag, grp_a_data,grp_b_data)
             if result is not None:
                 tag_values = ' '.join(
-                    f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                    f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                     for x in data_chunk.loc[tag].values
                 )
-                results.append((abs(result[1]), tag_values, result[2]))
+                results.append((abs(result[1]), tag_values, result[2], result[3]))
 
     elif test_type == "ziw":
         for tag in data_chunk.index:
             result = perform_ziw(tag, grp_a_data, grp_b_data, label_dict)
             tag_values = ' '.join(
-                f"{round(float(x), 2):g}" if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
+                f"{float(x):.2f}".rstrip('0').rstrip('.') if isinstance(x, (int, float, np.number)) or str(x).replace('.', '', 1).isdigit() else str(x)
                 for x in data_chunk.loc[tag].values
             )
-            results.append((abs(result[1]), tag_values))
+            results.append((abs(result[1]), tag_values, result[2], result[3]))
             # WIP
             #kmer_values = data_chunk.loc[tag][1:].astype(float).round(1)
             #tag_values = ' '.join(kmer_values.astype(str).tolist())
